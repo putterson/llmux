@@ -80,7 +80,7 @@ fn main() {
     let cli = Cli::parse();
 
     // Skip default tracing init for _serve (it sets up its own file-based tracing)
-    if !matches!(cli.command, Commands::Serve(_)) {
+    if !matches!(cli.command, Some(Commands::Serve(_))) {
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::from_default_env()
@@ -99,14 +99,14 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     // _serve handles its own config; avoid loading for it
-    if let Commands::Serve(ref serve_args) = cli.command {
+    if let Some(Commands::Serve(ref serve_args)) = cli.command {
         return session::run_serve(serve_args);
     }
 
     let config = Config::load()?;
 
     match cli.command {
-        Commands::Spawn {
+        Some(Commands::Spawn {
             prompt,
             agent,
             name,
@@ -114,32 +114,61 @@ fn run(cli: Cli) -> Result<()> {
             source,
             detach,
             agent_args,
-        } => cmd_spawn(config, prompt, agent, name, dir, source, detach, agent_args),
+        }) => cmd_spawn(config, prompt, agent, name, dir, source, detach, agent_args),
 
-        Commands::Ls { all, json } => cmd_list(all, json),
+        Some(Commands::Ls { all, json }) => cmd_list(all, json),
 
-        Commands::Attach { name_or_id } => cmd_attach(name_or_id),
+        Some(Commands::Attach { name_or_id }) => cmd_attach(name_or_id),
 
-        Commands::History { limit, agent, json } => cmd_history(limit, agent, json),
+        Some(Commands::History { limit, agent, json }) => cmd_history(limit, agent, json),
 
-        Commands::Resume {
+        Some(Commands::Resume {
             name_or_id,
             latest,
             agent: agent_override,
             detach,
-        } => cmd_resume(config, name_or_id, latest, agent_override, detach),
+        }) => cmd_resume(config, name_or_id, latest, agent_override, detach),
 
-        Commands::Kill {
+        Some(Commands::Kill {
             name_or_id,
             signal,
             all,
-        } => cmd_kill(name_or_id, signal, all),
+        }) => cmd_kill(name_or_id, signal, all),
 
-        Commands::Config { path, raw } => cmd_config(config, path, raw),
+        Some(Commands::Config { path, raw }) => cmd_config(config, path, raw),
 
-        Commands::Clean { dry_run, workspaces } => cmd_clean(config, dry_run, workspaces),
+        Some(Commands::Clean { dry_run, workspaces }) => cmd_clean(config, dry_run, workspaces),
 
-        Commands::Serve(serve_args) => session::run_serve(&serve_args),
+        Some(Commands::Serve(serve_args)) => session::run_serve(&serve_args),
+
+        None => cmd_default(config),
+    }
+}
+
+fn cmd_default(config: Config) -> Result<()> {
+    let db = Database::open()?;
+    db.reap_dead_sessions()?;
+
+    let cwd = std::env::current_dir()?
+        .canonicalize()?
+        .to_string_lossy()
+        .to_string();
+
+    let running = db.list_running_sessions_in_dir(&cwd)?;
+
+    if let Some(session) = running.into_iter().next() {
+        eprintln!("Attaching to running session '{}'…", session.name);
+
+        let socket_path = session.socket_path.as_ref().ok_or_else(|| {
+            error::Error::Socket(format!("session '{}' has no socket path", session.name))
+        })?;
+
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            session::attach::attach(std::path::Path::new(socket_path), &session.name).await
+        })
+    } else {
+        cmd_spawn(config, None, None, None, None, vec![], false, None)
     }
 }
 

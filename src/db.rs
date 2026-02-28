@@ -242,6 +242,16 @@ impl Database {
         Ok(sessions)
     }
 
+    pub fn list_running_sessions_in_dir(&self, work_dir: &str) -> Result<Vec<Session>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT * FROM sessions WHERE status = 'running' AND work_dir = ?1 ORDER BY started_at DESC",
+        )?;
+        let sessions = stmt
+            .query_map(params![work_dir], row_to_session)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(sessions)
+    }
+
     pub fn history(&self, limit: usize, agent_type: Option<&str>) -> Result<Vec<Session>> {
         let sql = match agent_type {
             Some(_) => {

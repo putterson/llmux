@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(name = "llmux", version, about = "Agent multiplexer — spawn, attach, and manage CLI coding agents")]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
