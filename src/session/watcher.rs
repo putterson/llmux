@@ -64,6 +64,7 @@ impl InputWatcher {
                             Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {
                                 had_activity = false;
                                 idle_alerted = false;
+                                last_output_time = Instant::now();
                             }
                             Err(broadcast::error::RecvError::Closed) => {
                                 debug!("watcher: input channel closed");
@@ -74,7 +75,6 @@ impl InputWatcher {
                     result = output_rx.recv() => {
                         match result {
                             Ok(data) => {
-                                had_activity = true;
                                 bytes_this_second += data.len();
 
                                 // Append to recent output buffer (keep last 4KB for pattern matching)
@@ -123,6 +123,7 @@ impl InputWatcher {
                         // Only reset idle timer for substantial output (>128 bytes/sec),
                         // ignoring low-bandwidth animations like blinking dots
                         if bytes_this_second > 128 {
+                            had_activity = true;
                             last_output_time = Instant::now();
                             idle_alerted = false;
                         }
