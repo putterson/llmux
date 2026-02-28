@@ -64,6 +64,7 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
     nix::sys::termios::tcsetattr(stdin_fd, nix::sys::termios::SetArg::TCSANOW, &raw)?;
 
     let running = Arc::new(AtomicBool::new(true));
+    let session_ended = Arc::new(AtomicBool::new(false));
 
     // Split stream
     let (read_half, write_half) = stream.into_split();
@@ -89,6 +90,7 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
 
     // Task: read from socket, write to stdout
     let running_reader = running.clone();
+    let session_ended_reader = session_ended.clone();
     let read_half_clone = read_half.clone();
     let original_termios_clone = original_termios.clone();
     let reader_task = tokio::spawn(async move {
@@ -126,6 +128,7 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
                         Some(code) => eprintln!("\nSession ended (exit code: {})", code),
                         None => eprintln!("\nSession ended"),
                     }
+                    session_ended_reader.store(true, Ordering::Relaxed);
                     running_reader.store(false, Ordering::Relaxed);
                     break;
                 }
@@ -211,7 +214,9 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
     // Restore terminal
     restore_terminal(&original_termios);
 
-    eprintln!("Detached from session '{}'.", session_name);
+    if !session_ended.load(Ordering::Relaxed) {
+        eprintln!("Detached from session '{}'.", session_name);
+    }
     Ok(())
 }
 

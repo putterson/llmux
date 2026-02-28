@@ -145,6 +145,21 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// Run attach and shut down the runtime without waiting for background tasks.
+///
+/// The attach function uses `spawn_blocking` to read from stdin. When a session
+/// ends, that blocking read is still pending. Using `shutdown_background()`
+/// instead of letting the runtime drop normally avoids hanging until the user
+/// presses a key.
+fn run_attach(socket_path: &str, session_name: &str) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new()?;
+    let result = rt.block_on(async {
+        session::attach::attach(std::path::Path::new(socket_path), session_name).await
+    });
+    rt.shutdown_background();
+    result
+}
+
 fn cmd_default(config: Config) -> Result<()> {
     let db = Database::open()?;
     db.reap_dead_sessions()?;
@@ -163,10 +178,7 @@ fn cmd_default(config: Config) -> Result<()> {
             error::Error::Socket(format!("session '{}' has no socket path", session.name))
         })?;
 
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async {
-            session::attach::attach(std::path::Path::new(socket_path), &session.name).await
-        })
+        run_attach(socket_path, &session.name)
     } else {
         cmd_spawn(config, None, None, None, None, vec![], false, None)
     }
@@ -204,11 +216,8 @@ fn cmd_spawn(
     if !detach {
         // Small delay to let the session server start
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async {
-            let socket_path = session.socket_path.as_ref().unwrap();
-            session::attach::attach(std::path::Path::new(socket_path), &session.name).await
-        })?;
+        let socket_path = session.socket_path.as_ref().unwrap();
+        run_attach(socket_path, &session.name)?;
     }
 
     Ok(())
@@ -293,10 +302,7 @@ fn cmd_attach(name_or_id: Option<String>) -> Result<()> {
         error::Error::Socket(format!("session '{}' has no socket path", session.name))
     })?;
 
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        session::attach::attach(std::path::Path::new(socket_path), &session.name).await
-    })
+    run_attach(socket_path, &session.name)
 }
 
 fn cmd_history(limit: usize, agent: Option<String>, json: bool) -> Result<()> {
@@ -385,11 +391,8 @@ fn cmd_resume(
 
     if !detach {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async {
-            let socket_path = session.socket_path.as_ref().unwrap();
-            session::attach::attach(std::path::Path::new(socket_path), &session.name).await
-        })?;
+        let socket_path = session.socket_path.as_ref().unwrap();
+        run_attach(socket_path, &session.name)?;
     }
 
     Ok(())
