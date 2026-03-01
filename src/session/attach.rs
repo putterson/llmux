@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::session::chord::ChordAction;
 use crate::session::socket::{
     encode_frame, FRAME_ALERT, FRAME_DETACH, FRAME_PTY_INPUT, FRAME_PTY_OUTPUT, FRAME_RESIZE,
     FRAME_SESSION_END, FRAME_SESSION_INFO,
@@ -29,6 +30,9 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
         "Attached to session '{}'. Press Ctrl+] then q to detach.",
         session_name
     );
+
+    // Check for debug input logging
+    let debug_input = std::env::var("LLMUX_DEBUG_INPUT").map_or(false, |v| v == "1");
 
     // Send initial resize
     send_resize(&mut stream).await?;
@@ -145,10 +149,12 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
     // Task: read from stdin, write to socket (with detach escape detection)
     let running_writer = running.clone();
     let write_half_input = write_half.clone();
+    let session_name_owned = session_name.to_string();
+    let original_termios_diag = original_termios.clone();
     let writer_task = tokio::spawn(async move {
         let mut stdin = io::stdin();
         let mut buf = [0u8; 1024];
-        let mut saw_ctrl_bracket = false;
+        let mut chord = super::chord::ChordDetector::new();
 
         loop {
             if !running_writer.load(Ordering::Relaxed) {
@@ -171,31 +177,48 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
                         break;
                     }
 
-                    // Check for detach escape: Ctrl+] (0x1D) then 'q'
-                    let input = &buf[..n];
-                    if saw_ctrl_bracket {
-                        if input.first() == Some(&b'q') {
-                            // Detach
+                    if debug_input {
+                        let hex: Vec<String> =
+                            buf[..n].iter().map(|b| format!("{:02x}", b)).collect();
+                        eprintln!("[LLMUX_DEBUG_INPUT] stdin {} bytes: {}", n, hex.join(" "));
+                    }
+
+                    let result = chord.process(&buf[..n]);
+
+                    if !result.forward.is_empty() {
+                        let frame = encode_frame(FRAME_PTY_INPUT, &result.forward);
+                        let mut wh = write_half_input.lock().await;
+                        let _ = wh.write_all(&frame).await;
+                    }
+
+                    match result.action {
+                        ChordAction::Detach => {
                             let frame = encode_frame(FRAME_DETACH, &[]);
                             let mut wh = write_half_input.lock().await;
                             let _ = wh.write_all(&frame).await;
                             running_writer.store(false, Ordering::Relaxed);
                             break;
-                        } else {
-                            // False alarm — send the Ctrl+] and the current input
-                            saw_ctrl_bracket = false;
-                            let mut combined = vec![0x1D];
-                            combined.extend_from_slice(input);
-                            let frame = encode_frame(FRAME_PTY_INPUT, &combined);
-                            let mut wh = write_half_input.lock().await;
-                            let _ = wh.write_all(&frame).await;
                         }
-                    } else if n == 1 && input[0] == 0x1D {
-                        saw_ctrl_bracket = true;
-                    } else {
-                        let frame = encode_frame(FRAME_PTY_INPUT, input);
-                        let mut wh = write_half_input.lock().await;
-                        let _ = wh.write_all(&frame).await;
+                        ChordAction::Diagnostic => {
+                            // Temporarily restore terminal for diagnostic output
+                            restore_terminal(&original_termios_diag);
+                            print_diagnostic(
+                                &session_name_owned,
+                                &chord,
+                                debug_input,
+                            );
+                            // Re-enter raw mode
+                            let stdin_handle = io::stdin();
+                            let stdin_fd = stdin_handle.as_fd();
+                            let mut raw = original_termios_diag.clone();
+                            nix::sys::termios::cfmakeraw(&mut raw);
+                            let _ = nix::sys::termios::tcsetattr(
+                                stdin_fd,
+                                nix::sys::termios::SetArg::TCSANOW,
+                                &raw,
+                            );
+                        }
+                        ChordAction::None => {}
                     }
                 }
                 _ => break,
@@ -218,6 +241,47 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
         eprintln!("Detached from session '{}'.", session_name);
     }
     Ok(())
+}
+
+/// Print diagnostic information about the session and chord detector state.
+fn print_diagnostic(
+    session_name: &str,
+    chord: &super::chord::ChordDetector,
+    debug_input: bool,
+) {
+    let mut stderr = io::stderr();
+    let _ = writeln!(stderr, "\n--- llmux diagnostic (Ctrl+] d) ---");
+    let _ = writeln!(stderr, "Session:          {}", session_name);
+    let _ = writeln!(stderr, "Binary version:   {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(stderr, "Chord state:      {}", chord.state_description());
+
+    // Last input bytes hex dump
+    let last = chord.last_input_bytes();
+    if last.is_empty() {
+        let _ = writeln!(stderr, "Last input bytes: (none)");
+    } else {
+        let hex: Vec<String> = last.iter().map(|b| format!("{:02x}", b)).collect();
+        let _ = writeln!(stderr, "Last input bytes: {}", hex.join(" "));
+    }
+
+    // Terminal info
+    let term = std::env::var("TERM").unwrap_or_else(|_| "(unset)".to_string());
+    let _ = writeln!(stderr, "TERM:             {}", term);
+
+    if let Ok(payload) = get_resize_payload() {
+        if payload.len() >= 4 {
+            let rows = u16::from_be_bytes([payload[0], payload[1]]);
+            let cols = u16::from_be_bytes([payload[2], payload[3]]);
+            let _ = writeln!(stderr, "Terminal size:    {}x{}", cols, rows);
+        }
+    }
+
+    let _ = writeln!(
+        stderr,
+        "LLMUX_DEBUG_INPUT: {}",
+        if debug_input { "enabled" } else { "disabled" }
+    );
+    let _ = writeln!(stderr, "---");
 }
 
 fn restore_terminal(termios: &nix::sys::termios::Termios) {

@@ -132,6 +132,10 @@ pub enum Commands {
         workspaces: bool,
     },
 
+    /// Debug terminal input — shows hex values for every keypress
+    #[command(alias = "di")]
+    DebugInput,
+
     /// Internal: run a session server (not for direct use)
     #[command(hide = true)]
     #[command(name = "_serve")]
