@@ -30,6 +30,34 @@ pub(crate) struct ChordResult {
 
 const CTRL_BRACKET: u8 = 0x1D;
 
+// CSI representations of Ctrl+] from enhanced keyboard protocols:
+// Kitty keyboard protocol: ESC [ 93 ; 5 u  (93 = ']' codepoint, 5 = ctrl modifier)
+const KITTY_CTRL_BRACKET: &[u8] = b"\x1b[93;5u";
+// xterm modifyOtherKeys:   ESC [ 27 ; 5 ; 93 ~
+const XTERM_CTRL_BRACKET: &[u8] = b"\x1b[27;5;93~";
+
+/// Normalize input by converting known CSI representations of Ctrl+] to the
+/// raw byte 0x1D. This ensures chord detection works regardless of whether the
+/// terminal emulator uses enhanced keyboard reporting (Kitty protocol, xterm
+/// modifyOtherKeys, etc.).
+pub(crate) fn normalize_input(input: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if input[i..].starts_with(KITTY_CTRL_BRACKET) {
+            result.push(CTRL_BRACKET);
+            i += KITTY_CTRL_BRACKET.len();
+        } else if input[i..].starts_with(XTERM_CTRL_BRACKET) {
+            result.push(CTRL_BRACKET);
+            i += XTERM_CTRL_BRACKET.len();
+        } else {
+            result.push(input[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 impl ChordDetector {
     pub fn new() -> Self {
         Self {
@@ -373,6 +401,81 @@ mod tests {
         let result = det.last_input_bytes();
         assert_eq!(result.len(), 64);
         assert_eq!(result, &data[6..70]);
+    }
+
+    // === normalize_input tests ===
+
+    #[test]
+    fn normalize_kitty_ctrl_bracket() {
+        let input = b"\x1b[93;5u";
+        assert_eq!(normalize_input(input), vec![0x1D]);
+    }
+
+    #[test]
+    fn normalize_xterm_ctrl_bracket() {
+        let input = b"\x1b[27;5;93~";
+        assert_eq!(normalize_input(input), vec![0x1D]);
+    }
+
+    #[test]
+    fn normalize_kitty_ctrl_bracket_then_q() {
+        let input = b"\x1b[93;5uq";
+        assert_eq!(normalize_input(input), vec![0x1D, b'q']);
+    }
+
+    #[test]
+    fn normalize_with_preceding_bytes() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"hello");
+        input.extend_from_slice(b"\x1b[93;5u");
+        input.push(b'q');
+        let result = normalize_input(&input);
+        assert_eq!(result, vec![b'h', b'e', b'l', b'l', b'o', 0x1D, b'q']);
+    }
+
+    #[test]
+    fn normalize_passthrough_regular_esc_sequences() {
+        // Regular escape sequences should NOT be modified
+        let input = b"\x1b[31m";
+        assert_eq!(normalize_input(input), input.to_vec());
+    }
+
+    #[test]
+    fn normalize_passthrough_plain_text() {
+        let input = b"hello world";
+        assert_eq!(normalize_input(input), input.to_vec());
+    }
+
+    #[test]
+    fn normalize_passthrough_raw_ctrl_bracket() {
+        // Raw 0x1D should pass through unchanged
+        let input = &[0x1D, b'q'];
+        assert_eq!(normalize_input(input), vec![0x1D, b'q']);
+    }
+
+    #[test]
+    fn normalize_then_chord_detect_kitty() {
+        let mut det = ChordDetector::new();
+        let input = b"\x1b[93;5uq";
+        let normalized = normalize_input(input);
+        let result = det.process(&normalized);
+        assert_eq!(result.action, ChordAction::Detach);
+        assert!(result.forward.is_empty());
+    }
+
+    #[test]
+    fn normalize_then_chord_detect_kitty_split() {
+        let mut det = ChordDetector::new();
+
+        // First read: Kitty Ctrl+]
+        let r1 = det.process(&normalize_input(b"\x1b[93;5u"));
+        assert!(r1.forward.is_empty());
+        assert_eq!(r1.action, ChordAction::None); // pending
+
+        // Second read: 'q'
+        let r2 = det.process(&normalize_input(b"q"));
+        assert!(r2.forward.is_empty());
+        assert_eq!(r2.action, ChordAction::Detach);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::session::chord::ChordAction;
+use crate::session::chord::{normalize_input, ChordAction};
 use crate::session::socket::{
     encode_frame, FRAME_ALERT, FRAME_DETACH, FRAME_PTY_INPUT, FRAME_PTY_OUTPUT, FRAME_RESIZE,
     FRAME_SESSION_END, FRAME_SESSION_INFO,
@@ -66,6 +66,19 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
     let mut raw = original_termios.clone();
     nix::sys::termios::cfmakeraw(&mut raw);
     nix::sys::termios::tcsetattr(stdin_fd, nix::sys::termios::SetArg::TCSANOW, &raw)?;
+
+    // Reset enhanced keyboard reporting modes that the agent's output (via the
+    // replay buffer) may have enabled. Without this, terminals using Kitty
+    // keyboard protocol or xterm modifyOtherKeys report Ctrl+] as a CSI
+    // sequence instead of the raw byte 0x1D, breaking chord detection.
+    {
+        let mut stdout = io::stdout();
+        // Pop Kitty keyboard protocol level (no-op if none pushed)
+        let _ = stdout.write_all(b"\x1b[<u");
+        // Reset xterm modifyOtherKeys to mode 0 (disabled)
+        let _ = stdout.write_all(b"\x1b[>4;0m");
+        let _ = stdout.flush();
+    }
 
     let running = Arc::new(AtomicBool::new(true));
     let session_ended = Arc::new(AtomicBool::new(false));
@@ -183,7 +196,8 @@ pub async fn attach(socket_path: &Path, session_name: &str) -> Result<()> {
                         eprintln!("[LLMUX_DEBUG_INPUT] stdin {} bytes: {}", n, hex.join(" "));
                     }
 
-                    let result = chord.process(&buf[..n]);
+                    let normalized = normalize_input(&buf[..n]);
+                    let result = chord.process(&normalized);
 
                     if !result.forward.is_empty() {
                         let frame = encode_frame(FRAME_PTY_INPUT, &result.forward);
