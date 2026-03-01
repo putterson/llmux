@@ -139,6 +139,8 @@ fn run(cli: Cli) -> Result<()> {
 
         Some(Commands::Clean { dry_run, workspaces }) => cmd_clean(config, dry_run, workspaces),
 
+        Some(Commands::DebugInput) => cmd_debug_input(),
+
         Some(Commands::Serve(serve_args)) => session::run_serve(&serve_args),
 
         None => cmd_default(config),
@@ -158,6 +160,100 @@ fn run_attach(socket_path: &str, session_name: &str) -> Result<()> {
     });
     rt.shutdown_background();
     result
+}
+
+fn cmd_debug_input() -> Result<()> {
+    use std::io::Read;
+    use std::os::fd::AsFd;
+
+    eprintln!("llmux debug-input — press keys to see hex values. Press Ctrl+C or q to exit.");
+    eprintln!("Looking for Ctrl+] = 0x1d");
+    eprintln!();
+
+    let stdin_handle = std::io::stdin();
+    let stdin_fd = stdin_handle.as_fd();
+    let original_termios = nix::sys::termios::tcgetattr(stdin_fd)?;
+    let mut raw = original_termios.clone();
+    nix::sys::termios::cfmakeraw(&mut raw);
+    nix::sys::termios::tcsetattr(stdin_fd, nix::sys::termios::SetArg::TCSANOW, &raw)?;
+
+    let _guard = scopeguard::guard(original_termios, |orig| {
+        let stdin = std::io::stdin();
+        let _ = nix::sys::termios::tcsetattr(
+            stdin.as_fd(),
+            nix::sys::termios::SetArg::TCSANOW,
+            &orig,
+        );
+    });
+
+    let mut stdin = std::io::stdin();
+    let mut buf = [0u8; 64];
+
+    loop {
+        let n = stdin.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+
+        for &b in &buf[..n] {
+            let name = control_char_name(b);
+            if let Some(name) = name {
+                eprintln!("  0x{:02x}  {}", b, name);
+            } else if b.is_ascii_graphic() || b == b' ' {
+                eprintln!("  0x{:02x}  '{}'", b, b as char);
+            } else {
+                eprintln!("  0x{:02x}", b);
+            }
+
+            // Exit on Ctrl+C or 'q'
+            if b == 0x03 || b == b'q' {
+                eprintln!();
+                eprintln!("Exiting.");
+                return Ok(());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn control_char_name(b: u8) -> Option<&'static str> {
+    match b {
+        0x00 => Some("NUL (Ctrl+@)"),
+        0x01 => Some("SOH (Ctrl+A)"),
+        0x02 => Some("STX (Ctrl+B)"),
+        0x03 => Some("ETX (Ctrl+C)"),
+        0x04 => Some("EOT (Ctrl+D)"),
+        0x05 => Some("ENQ (Ctrl+E)"),
+        0x06 => Some("ACK (Ctrl+F)"),
+        0x07 => Some("BEL (Ctrl+G)"),
+        0x08 => Some("BS  (Ctrl+H / Backspace)"),
+        0x09 => Some("HT  (Ctrl+I / Tab)"),
+        0x0A => Some("LF  (Ctrl+J / Enter)"),
+        0x0B => Some("VT  (Ctrl+K)"),
+        0x0C => Some("FF  (Ctrl+L)"),
+        0x0D => Some("CR  (Ctrl+M / Return)"),
+        0x0E => Some("SO  (Ctrl+N)"),
+        0x0F => Some("SI  (Ctrl+O)"),
+        0x10 => Some("DLE (Ctrl+P)"),
+        0x11 => Some("DC1 (Ctrl+Q)"),
+        0x12 => Some("DC2 (Ctrl+R)"),
+        0x13 => Some("DC3 (Ctrl+S)"),
+        0x14 => Some("DC4 (Ctrl+T)"),
+        0x15 => Some("NAK (Ctrl+U)"),
+        0x16 => Some("SYN (Ctrl+V)"),
+        0x17 => Some("ETB (Ctrl+W)"),
+        0x18 => Some("CAN (Ctrl+X)"),
+        0x19 => Some("EM  (Ctrl+Y)"),
+        0x1A => Some("SUB (Ctrl+Z)"),
+        0x1B => Some("ESC (Ctrl+[)"),
+        0x1C => Some("FS  (Ctrl+\\)"),
+        0x1D => Some("GS  (Ctrl+]) *** DETACH TRIGGER ***"),
+        0x1E => Some("RS  (Ctrl+^)"),
+        0x1F => Some("US  (Ctrl+_)"),
+        0x7F => Some("DEL (Backspace/Delete)"),
+        _ => None,
+    }
 }
 
 fn cmd_default(config: Config) -> Result<()> {

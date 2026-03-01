@@ -1,4 +1,5 @@
 pub mod attach;
+pub(crate) mod chord;
 pub mod pty;
 pub mod socket;
 pub mod watcher;

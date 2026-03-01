@@ -77,3 +77,52 @@ after typing, the stale timer would fire an alert as soon as the echo set
 
 **Specification**:
 - `docs/idle-alerts.md` — invariants and edge cases for the idle alert system
+
+---
+
+## Ctrl+] q chord keybinding fails to detach
+
+**Status**: Fixed
+
+**Symptoms**:
+Pressing Ctrl+] then q no longer detaches from a session. The chord was
+working previously but stopped being recognized.
+
+**Root cause**: In `src/session/attach.rs`, the chord detection required
+Ctrl+] (`0x1D`) to arrive as a **single byte** in its own `read()` call
+(`n == 1 && input[0] == 0x1D`). If the terminal delivered both Ctrl+] and
+`q` in the same read buffer (e.g., `[0x1D, 0x71]` with `n == 2`), the
+`n == 1` check failed and both bytes were forwarded as normal PTY input.
+This batching behavior depends on terminal emulator timing and system load,
+explaining why the chord worked intermittently.
+
+**Fix**: Extracted chord detection into a `ChordDetector` state machine
+(`src/session/chord.rs`) that scans the entire input buffer for `0x1D`
+instead of requiring it to be the sole byte. Handles all cases:
+- Split reads: Ctrl+] in one read, q in the next
+- Batched reads: `[0x1D, b'q']` in a single read
+- Mid-buffer: `[..., 0x1D, b'q']` — forwards preceding bytes, then detaches
+- Ctrl+] at buffer end: enters pending state, forwards preceding bytes
+- False alarms: Ctrl+] followed by non-q, forwards everything
+
+Replaced the inline state machine in `attach.rs` with `ChordDetector::process()`.
+
+**Files changed**:
+- `src/session/chord.rs` — new `ChordDetector` state machine (created)
+- `src/session/mod.rs` — added `chord` module
+- `src/session/attach.rs` — replaced inline chord logic with `ChordDetector`
+
+**Test files**:
+- `src/session/chord.rs` — 12 tests: 2 bug reproduction tests proving the old
+  algorithm fails, 10 tests verifying the new detector handles all cases
+
+**Specification**:
+- `docs/chord-detach.md` — invariants and edge cases for chord detection
+
+**Diagnostic tooling** (added as follow-up):
+- `llmux debug-input` (alias `di`) — standalone raw-mode hex dump of stdin bytes
+- Ctrl+] d diagnostic chord — prints session name, version, chord state, last
+  64 input bytes, terminal info to stderr without detaching
+- `LLMUX_DEBUG_INPUT=1` env var — logs every stdin read as hex during attach
+- PTY integration test — verifies chord detection through real kernel PTY
+  buffering (`chord_through_real_pty` test in `src/session/chord.rs`)
