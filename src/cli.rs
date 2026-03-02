@@ -10,7 +10,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Spawn a new agent session
-    #[command(alias = "s")]
+    #[command(visible_alias = "s")]
     Spawn {
         /// Initial prompt to send to the agent
         prompt: Option<String>,
@@ -50,7 +50,7 @@ pub enum Commands {
     },
 
     /// List running sessions
-    #[command(aliases = ["list", "l"])]
+    #[command(visible_alias = "l", alias = "list")]
     Ls {
         /// Show all sessions (including stopped/crashed)
         #[arg(long = "all")]
@@ -62,14 +62,14 @@ pub enum Commands {
     },
 
     /// Attach to a running session
-    #[command(alias = "a")]
+    #[command(visible_alias = "a")]
     Attach {
         /// Session name or ID (prefix match supported; omit to attach if only one running)
         name_or_id: Option<String>,
     },
 
     /// Show session history
-    #[command(alias = "H")]
+    #[command(visible_alias = "H")]
     History {
         /// Maximum number of entries to show
         #[arg(short = 'n', default_value = "20")]
@@ -85,7 +85,7 @@ pub enum Commands {
     },
 
     /// Resume a previous session
-    #[command(alias = "r")]
+    #[command(visible_alias = "r")]
     Resume {
         /// Session name or ID to resume
         name_or_id: Option<String>,
@@ -106,7 +106,7 @@ pub enum Commands {
     },
 
     /// Kill a running session
-    #[command(alias = "k")]
+    #[command(visible_alias = "k")]
     Kill {
         /// Session name or ID
         name_or_id: Option<String>,
@@ -132,7 +132,7 @@ pub enum Commands {
     },
 
     /// Clean up stale sessions and workspaces
-    #[command(alias = "c")]
+    #[command(visible_alias = "c")]
     Clean {
         /// Show what would be cleaned without actually doing it
         #[arg(long = "dry-run")]
@@ -144,7 +144,7 @@ pub enum Commands {
     },
 
     /// Debug terminal input — shows hex values for every keypress
-    #[command(alias = "di")]
+    #[command(visible_alias = "di")]
     DebugInput,
 
     /// Internal: run a session server (not for direct use)
