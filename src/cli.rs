@@ -15,7 +15,10 @@ pub enum Commands {
         /// Initial prompt to send to the agent
         prompt: Option<String>,
 
-        /// Agent to use: a known name (claude, cursor) or any CLI command [default: claude]
+        /// Agent to use: a known name (claude, cursor) or any CLI command
+        ///
+        /// When omitted, auto-detects the first available agent in PATH
+        /// (checks claude, cursor, then config-defined agents in order).
         ///
         /// Predefined agents have built-in prompt handling and resume support.
         /// Any other value is treated as a CLI command to run directly:

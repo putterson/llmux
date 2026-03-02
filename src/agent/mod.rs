@@ -138,45 +138,88 @@ pub fn builtin_agents(config_agents: &HashMap<String, AgentConfig>) -> HashMap<S
     agents
 }
 
-/// Resolve an agent by name (with "claude" as default).
+/// Preferred order when auto-detecting which agent to use.
+const DEFAULT_AGENT_PRIORITY: &[&str] = &["claude", "cursor"];
+
+/// Resolve an agent by name, or auto-detect the first available one.
 ///
-/// If the value doesn't match a known agent, it's treated as an arbitrary
-/// CLI command (e.g. `--agent aider` or `--agent "my-tool --flag"`).
+/// When `name` is `None`, checks each known agent in priority order
+/// (claude, cursor, then config-defined agents) and returns the first
+/// whose command exists in PATH.
+///
+/// When `name` is `Some` but doesn't match a known agent, it's treated
+/// as an arbitrary CLI command (e.g. `--agent aider` or `--agent "my-tool --flag"`).
 pub fn resolve_agent(
     name: Option<&str>,
     config_agents: &HashMap<String, AgentConfig>,
 ) -> crate::error::Result<AgentDef> {
-    let name = name.unwrap_or("claude");
     let agents = builtin_agents(config_agents);
 
-    if let Some(def) = agents.get(name) {
-        return Ok(def.clone());
+    if let Some(name) = name {
+        if let Some(def) = agents.get(name) {
+            return Ok(def.clone());
+        }
+
+        // Treat as an arbitrary CLI command
+        let mut parts = shell_words(name);
+        if parts.is_empty() {
+            return Err(crate::error::Error::AgentNotFound(name.to_string()));
+        }
+
+        let command = parts.remove(0);
+        let display_name = command
+            .rsplit('/')
+            .next()
+            .unwrap_or(&command)
+            .to_string();
+
+        return Ok(AgentDef {
+            name: display_name,
+            command,
+            default_args: parts,
+            prompt_flag: None,
+            resume_flag: None,
+            continue_flag: None,
+            session_id_flag: None,
+            session_id_strategy: SessionIdStrategy::None,
+            alert_patterns: vec![],
+        });
     }
 
-    // Treat as an arbitrary CLI command
-    let mut parts = shell_words(name);
-    if parts.is_empty() {
-        return Err(crate::error::Error::AgentNotFound(name.to_string()));
+    // No agent specified — auto-detect first available in priority order
+    for &key in DEFAULT_AGENT_PRIORITY {
+        if let Some(def) = agents.get(key) {
+            if command_exists(&def.command) {
+                return Ok(def.clone());
+            }
+        }
     }
 
-    let command = parts.remove(0);
-    let display_name = command
-        .rsplit('/')
-        .next()
-        .unwrap_or(&command)
-        .to_string();
+    // Check config-defined agents not already in the priority list
+    for (key, def) in &agents {
+        if !DEFAULT_AGENT_PRIORITY.contains(&key.as_str()) && command_exists(&def.command) {
+            return Ok(def.clone());
+        }
+    }
 
-    Ok(AgentDef {
-        name: display_name,
-        command,
-        default_args: parts,
-        prompt_flag: None,
-        resume_flag: None,
-        continue_flag: None,
-        session_id_flag: None,
-        session_id_strategy: SessionIdStrategy::None,
-        alert_patterns: vec![],
-    })
+    Err(crate::error::Error::Other(
+        "no agent found in PATH; install claude or cursor, or specify --agent".to_string(),
+    ))
+}
+
+fn command_exists(cmd: &str) -> bool {
+    let path = std::path::Path::new(cmd);
+    if path.is_absolute() {
+        return path.exists();
+    }
+    if let Some(dirs) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&dirs) {
+            if dir.join(cmd).is_file() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn shell_words(s: &str) -> Vec<String> {
