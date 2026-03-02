@@ -138,15 +138,74 @@ pub fn builtin_agents(config_agents: &HashMap<String, AgentConfig>) -> HashMap<S
     agents
 }
 
-/// Resolve an agent by name (with "claude" as default)
+/// Resolve an agent by name (with "claude" as default).
+///
+/// If the value doesn't match a known agent, it's treated as an arbitrary
+/// CLI command (e.g. `--agent aider` or `--agent "my-tool --flag"`).
 pub fn resolve_agent(
     name: Option<&str>,
     config_agents: &HashMap<String, AgentConfig>,
 ) -> crate::error::Result<AgentDef> {
     let name = name.unwrap_or("claude");
     let agents = builtin_agents(config_agents);
-    agents
-        .get(name)
-        .cloned()
-        .ok_or_else(|| crate::error::Error::AgentNotFound(name.to_string()))
+
+    if let Some(def) = agents.get(name) {
+        return Ok(def.clone());
+    }
+
+    // Treat as an arbitrary CLI command
+    let mut parts = shell_words(name);
+    if parts.is_empty() {
+        return Err(crate::error::Error::AgentNotFound(name.to_string()));
+    }
+
+    let command = parts.remove(0);
+    let display_name = command
+        .rsplit('/')
+        .next()
+        .unwrap_or(&command)
+        .to_string();
+
+    Ok(AgentDef {
+        name: display_name,
+        command,
+        default_args: parts,
+        prompt_flag: None,
+        resume_flag: None,
+        continue_flag: None,
+        session_id_flag: None,
+        session_id_strategy: SessionIdStrategy::None,
+        alert_patterns: vec![],
+    })
+}
+
+fn shell_words(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escape_next = false;
+
+    for c in s.chars() {
+        if escape_next {
+            current.push(c);
+            escape_next = false;
+            continue;
+        }
+        match c {
+            '\\' if !in_single_quote => escape_next = true,
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            ' ' | '\t' if !in_single_quote && !in_double_quote => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }

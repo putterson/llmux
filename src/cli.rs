@@ -15,8 +15,14 @@ pub enum Commands {
         /// Initial prompt to send to the agent
         prompt: Option<String>,
 
-        /// Agent type (default: claude)
-        #[arg(short = 'a', long = "agent")]
+        /// Agent to use: a known name (claude, cursor) or any CLI command [default: claude]
+        ///
+        /// Predefined agents have built-in prompt handling and resume support.
+        /// Any other value is treated as a CLI command to run directly:
+        ///   -a aider
+        ///   -a "codex --model o4-mini"
+        ///   -a /usr/local/bin/my-agent
+        #[arg(short = 'a', long = "agent", verbatim_doc_comment)]
         agent: Option<String>,
 
         /// Session name (auto-generated if omitted)
@@ -85,7 +91,7 @@ pub enum Commands {
         #[arg(long = "latest")]
         latest: bool,
 
-        /// Override agent type
+        /// Override agent: a known name (claude, cursor) or any CLI command
         #[arg(short = 'a', long = "agent")]
         agent: Option<String>,
 
