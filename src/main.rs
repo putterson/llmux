@@ -114,7 +114,15 @@ fn run(cli: Cli) -> Result<()> {
             source,
             detach,
             agent_args,
-        }) => cmd_spawn(config, prompt, agent, name, dir, source, detach, agent_args),
+        }) => cmd_spawn(config, prompt, agent, name, dir, source, false, detach, agent_args),
+
+        Some(Commands::Temp {
+            prompt,
+            agent,
+            name,
+            detach,
+            agent_args,
+        }) => cmd_spawn(config, prompt, agent, name, None, vec![], true, detach, agent_args),
 
         Some(Commands::Ls { all, json }) => cmd_list(all, json),
 
@@ -276,7 +284,7 @@ fn cmd_default(config: Config) -> Result<()> {
 
         run_attach(socket_path, &session.name)
     } else {
-        cmd_spawn(config, None, None, None, None, vec![], false, None)
+        cmd_spawn(config, None, None, None, None, vec![], false, false, None)
     }
 }
 
@@ -288,6 +296,7 @@ fn cmd_spawn(
     name: Option<String>,
     dir: Option<String>,
     sources: Vec<String>,
+    temp: bool,
     detach: bool,
     agent_args: Option<String>,
 ) -> Result<()> {
@@ -304,6 +313,7 @@ fn cmd_spawn(
         name.as_deref(),
         dir.as_deref(),
         &sources,
+        temp,
         detach,
         &extra_args,
         &config,
@@ -476,6 +486,7 @@ fn cmd_resume(
         None,
         Some(&old_session.work_dir),
         &old_session.source_dirs.unwrap_or_default(),
+        false,
         detach,
         &resume_args,
         &config,

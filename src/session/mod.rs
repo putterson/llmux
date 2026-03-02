@@ -23,6 +23,7 @@ pub fn spawn(
     name: Option<&str>,
     work_dir: Option<&str>,
     sources: &[String],
+    temp: bool,
     detach: bool,
     extra_agent_args: &[String],
     config: &Config,
@@ -57,6 +58,12 @@ pub fn spawn(
             sources,
         )?;
         (ws_dir, true, Some(sources.to_vec()))
+    } else if temp {
+        let ws_dir = workspace::create_empty_workspace(
+            &config.workspaces.base_dir,
+            &session_name,
+        )?;
+        (ws_dir, true, None)
     } else {
         let dir = match work_dir {
             Some(d) => {

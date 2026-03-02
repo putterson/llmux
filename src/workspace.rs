@@ -46,6 +46,14 @@ pub fn create_workspace(base_dir: &Path, name: &str, sources: &[String]) -> Resu
     Ok(workspace_dir)
 }
 
+/// Create an empty workspace directory (for temp sessions).
+/// Returns the path to the workspace directory.
+pub fn create_empty_workspace(base_dir: &Path, name: &str) -> Result<PathBuf> {
+    let workspace_dir = base_dir.join(name);
+    std::fs::create_dir_all(&workspace_dir)?;
+    Ok(workspace_dir)
+}
+
 /// Remove a workspace directory
 pub fn remove_workspace(workspace_dir: &Path) -> Result<()> {
     if workspace_dir.exists() {

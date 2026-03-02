@@ -143,6 +143,31 @@ pub enum Commands {
         workspaces: bool,
     },
 
+    /// Spawn a session in an empty temporary directory
+    #[command(visible_alias = "t")]
+    Temp {
+        /// Initial prompt to send to the agent
+        prompt: Option<String>,
+
+        /// Agent to use: a known name (claude, cursor) or any CLI command
+        ///
+        /// When omitted, auto-detects the first available agent in PATH.
+        #[arg(short = 'a', long = "agent", verbatim_doc_comment)]
+        agent: Option<String>,
+
+        /// Session name (auto-generated if omitted)
+        #[arg(short = 'n', long = "name")]
+        name: Option<String>,
+
+        /// Detach immediately after spawning
+        #[arg(long = "detach")]
+        detach: bool,
+
+        /// Additional arguments to pass to the agent
+        #[arg(long = "agent-args")]
+        agent_args: Option<String>,
+    },
+
     /// Debug terminal input — shows hex values for every keypress
     #[command(visible_alias = "di")]
     DebugInput,
