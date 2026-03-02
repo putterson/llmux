@@ -95,7 +95,9 @@ pub enum Commands {
         latest: bool,
 
         /// Override agent: a known name (claude, cursor) or any CLI command
-        #[arg(short = 'a', long = "agent")]
+        ///
+        /// When omitted, uses the original session's agent type.
+        #[arg(short = 'a', long = "agent", verbatim_doc_comment)]
         agent: Option<String>,
 
         /// Detach immediately after spawning
